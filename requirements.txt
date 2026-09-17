@@ -4,6 +4,7 @@ torchvision
 kornia
 opencv-python-headless
 numpy
+matplotlib
 streamlit
 streamlit-image-comparison
 pillow
