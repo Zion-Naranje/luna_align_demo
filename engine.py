@@ -2,9 +2,6 @@ import os
 import cv2
 import torch
 import numpy as np
-import matplotlib
-matplotlib.use('Agg')  # Headless backend to prevent Streamlit Cloud display crashes
-import matplotlib.pyplot as plt
 import kornia as K
 import kornia.feature as KF
 
@@ -29,7 +26,7 @@ def run_luna_align(ref_path, target_path):
     - Applies CLAHE dynamic normalization
     - Extracts deep transformer correspondences via LoFTR
     - Computes projective homography via MAGSAC++
-    - Warps target to reference frame, generates 50/50 blend, and plots green match vectors
+    - Warps target to reference frame, generates 50/50 blend, and draws vector matches
     """
     if not os.path.exists(ref_path) or os.path.getsize(ref_path) == 0:
         raise ValueError(f"Reference file is missing or empty: {ref_path}")
@@ -42,7 +39,7 @@ def run_luna_align(ref_path, target_path):
     if ref_img is None or target_img is None:
         raise ValueError("OpenCV failed to decode image files. Ensure valid PNG/JPEG formats.")
 
-    # Resize to standard 640x640 for rapid CPU inference and uniform coordinates
+    # Standardize scale for uniform coordinate mapping and rapid CPU compute
     h_std, w_std = 640, 640
     ref_img = cv2.resize(ref_img, (w_std, h_std))
     target_img = cv2.resize(target_img, (w_std, h_std))
@@ -51,7 +48,7 @@ def run_luna_align(ref_path, target_path):
     ref_clahe = apply_clahe(ref_img)
     target_clahe = apply_clahe(target_img)
 
-    # 2. Tensor Conversion
+    # 2. Convert to Kornia Float Tensors
     t_ref = torch.from_numpy(ref_clahe).float().unsqueeze(0).unsqueeze(0) / 255.0
     t_target = torch.from_numpy(target_clahe).float().unsqueeze(0).unsqueeze(0) / 255.0
 
@@ -70,7 +67,7 @@ def run_luna_align(ref_path, target_path):
     if total_matches < 4:
         return None, None, None, total_matches, 0.0
 
-    # 4. Geometric Verification (MAGSAC++)
+    # 4. Geometric Verification via MAGSAC++
     H, mask = cv2.findHomography(pts1, pts0, cv2.USAC_MAGSAC, 3.0)
     if H is None:
         return None, None, None, total_matches, 0.0
@@ -82,32 +79,27 @@ def run_luna_align(ref_path, target_path):
     if inlier_count < 4:
         return None, None, None, inlier_count, inlier_ratio
 
-    # 5. Warp Target to Reference Geometry
+    # 5. Warp Target to Base Reference Frame
     aligned_target = cv2.warpPerspective(target_img, H, (w_std, h_std))
 
     # 6. Generate 50/50 Blended Overlay
     overlay_blend = cv2.addWeighted(ref_img, 0.5, aligned_target, 0.5, 0)
 
-    # 7. Render Side-by-Side Green Correspondence Vector Map
-    fig, ax = plt.subplots(figsize=(10, 4), dpi=130)
+    # 7. Render Side-by-Side Match Vectors directly with OpenCV (Fast & Zero Buffer Errors)
     canvas = np.hstack((ref_img, target_img))
-    ax.imshow(canvas, cmap="gray")
+    vis_matches = cv2.cvtColor(canvas, cv2.COLOR_GRAY2RGB)
 
     inlier_pts0 = pts0[inliers]
     inlier_pts1 = pts1[inliers]
-    step = max(1, len(inlier_pts0) // 50)  # Draw up to 50 uncluttered vectors
+    step = max(1, len(inlier_pts0) // 40)  # Render ~40 uncluttered lines
 
     for i in range(0, len(inlier_pts0), step):
-        x0, y0 = inlier_pts0[i]
-        x1, y1 = inlier_pts1[i]
-        ax.plot([x0, x1 + w_std], [y0, y1], color="#00FF00", linewidth=0.8, alpha=0.8)
-        ax.scatter([x0, x1 + w_std], [y0, y1], color="red", s=3)
+        pt0 = (int(round(inlier_pts0[i][0])), int(round(inlier_pts0[i][1])))
+        pt1 = (int(round(inlier_pts1[i][0] + w_std)), int(round(inlier_pts1[i][1])))
 
-    ax.axis("off")
-    plt.tight_layout()
-    fig.canvas.draw()
-    vis_matches = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-    vis_matches = vis_matches.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-    plt.close(fig)
+        # Draw red endpoints and neon green correspondence lines
+        cv2.circle(vis_matches, pt0, 3, (255, 50, 50), -1, lineType=cv2.LINE_AA)
+        cv2.circle(vis_matches, pt1, 3, (255, 50, 50), -1, lineType=cv2.LINE_AA)
+        cv2.line(vis_matches, pt0, pt1, (0, 255, 0), 1, lineType=cv2.LINE_AA)
 
     return aligned_target, overlay_blend, vis_matches, inlier_count, inlier_ratio
