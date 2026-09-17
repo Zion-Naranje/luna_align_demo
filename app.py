@@ -28,7 +28,6 @@ temp_dir = "temp_uploads"
 os.makedirs(temp_dir, exist_ok=True)
 
 if preset == "Shackleton Crater Rim (Pre-loaded)":
-    # These files must be committed to your GitHub repo root
     ref_path = "ref_lroc.jpeg"
     target_path = "target_isro.jpeg"
 else:
@@ -37,18 +36,16 @@ else:
         f1 = st.file_uploader("Upload Reference Tile (TMC / LRO)", type=["png", "jpg", "jpeg"])
         if f1 is not None:
             ref_path = os.path.join(temp_dir, "ref_upload.png")
-            # f.getvalue() prevents file drain on Streamlit re-renders
             with open(ref_path, "wb") as f:
                 f.write(f1.getvalue())
     with c_u2:
         f2 = st.file_uploader("Upload Target Tile (OHRC / IIRS)", type=["png", "jpg", "jpeg"])
         if f2 is not None:
             target_path = os.path.join(temp_dir, "tgt_upload.png")
-            # f.getvalue() prevents file drain on Streamlit re-renders
             with open(target_path, "wb") as f:
                 f.write(f2.getvalue())
 
-# Check that files exist and are populated
+# Check that files exist and are non-empty
 if ref_path and target_path and os.path.exists(ref_path) and os.path.exists(target_path):
     img_ref_preview = cv2.imread(ref_path, cv2.IMREAD_GRAYSCALE)
     img_tgt_preview = cv2.imread(target_path, cv2.IMREAD_GRAYSCALE)
@@ -61,17 +58,21 @@ if ref_path and target_path and os.path.exists(ref_path) and os.path.exists(targ
             st.image(img_tgt_preview, caption="Unregistered Target Tile (OHRC / IIRS)", use_container_width=True)
 
         if st.button("⚡ Execute Sub-Pixel Registration", type="primary", use_container_width=True):
+            aligned = None
+            blend = None
+            matches_plot = None
+            inliers = 0
+            ratio = 0.0
+
             with st.spinner("Extracting LoFTR structural features & computing MAGSAC++ homography..."):
                 t0 = time.time()
                 try:
                     aligned, blend, matches_plot, inliers, ratio = run_luna_align(ref_path, target_path)
                     latency = round(time.time() - t0, 2)
-                    success = (aligned is not None)
                 except Exception as err:
                     st.error(f"Processing Error: {err}")
-                    success = False
 
-            if success:
+            if aligned is not None:
                 st.success("Registration Converged Successfully!")
 
                 # Metric Cards
@@ -85,7 +86,7 @@ if ref_path and target_path and os.path.exists(ref_path) and os.path.exists(targ
 
                 # 1. Correspondence Vector Map
                 st.subheader("1. Deep Correspondence Feature Map")
-                st.image(matches_plot, caption="Green lines indicate geometrically consistent tie-points", use_container_width=True)
+                st.image(matches_plot, caption="Green vectors indicate geometrically consistent tie-points", use_container_width=True)
 
                 # 2. 50/50 Overlay Blend
                 st.subheader("2. 50/50 Registered Overlay Blend")
