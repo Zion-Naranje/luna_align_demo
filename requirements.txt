@@ -1,0 +1,9 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+torchvision
+kornia
+opencv-python-headless
+numpy
+streamlit
+streamlit-image-comparison
+pillow
