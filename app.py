@@ -13,7 +13,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🛰️ LunaAlign: Automated Lunar Image Registration")
+st.title("🛰️ LunaAlign: Lunar Image Registration")
 st.markdown("Sub-pixel alignment of lunar orbital imagery under varying solar incidence angles and sensor scale disparities.")
 
 # Sidebar Dataset Selector (Pre-loaded benchmark pairs only)
