@@ -8,102 +8,118 @@ from streamlit_image_comparison import image_comparison
 from engine import run_luna_align
 
 st.set_page_config(
-    page_title="LunaAlign | Chandrayaan-2 Registration Engine",
+    page_title="LunaAlign | Chandrayaan-2 Registration Demo",
     page_icon="🛰️",
     layout="wide"
 )
 
-st.title("🛰️ LunaAlign: Chandrayaan-2 Automated Registration")
-st.markdown("**Sub-pixel Alignment Across Solar Illumination & Scale Disparities**")
+st.title("🛰️ LunaAlign: Automated Lunar Image Registration")
+st.markdown("Sub-pixel alignment of lunar orbital imagery under varying solar incidence angles and sensor scale disparities.")
 
-# Evaluation Mode Selector
-st.sidebar.header("Evaluation Controls")
-preset = st.sidebar.selectbox(
-    "Choose Lunar Region of Interest (ROI):",
-    ["Shackleton Crater Rim (Pre-loaded)", "Upload Custom Lunar Tiles"]
+# Sidebar Dataset Selector (Pre-loaded benchmark pairs only)
+st.sidebar.header("Select Test Dataset")
+pair_choice = st.sidebar.radio(
+    "Choose a lunar terrain pair to evaluate:",
+    [
+        "Pair 1: Central Crater Complex (TMC vs. LROC)",
+        "Pair 2: Shadow Invariance Test (Shifted Illumination)"
+    ]
 )
 
-ref_path, target_path = None, None
-temp_dir = "temp_uploads"
-os.makedirs(temp_dir, exist_ok=True)
-
-if preset == "Shackleton Crater Rim (Pre-loaded)":
-    ref_path = "ref_lroc.jpeg"
-    target_path = "target_isro.jpeg"
+if pair_choice == "Pair 1: Central Crater Complex (TMC vs. LROC)":
+    ref_path = "ref_pair1.jpeg"
+    target_path = "target_pair1.jpeg"
+    pair_description = (
+        "Evaluation of overlapping orbital frames showing the prominent central crater formation. "
+        "Notice the variations in crater rim shadows caused by different solar incidence angles."
+    )
 else:
-    c_u1, c_u2 = st.columns(2)
-    with c_u1:
-        f1 = st.file_uploader("Upload Reference Tile (TMC / LRO)", type=["png", "jpg", "jpeg"])
-        if f1 is not None:
-            ref_path = os.path.join(temp_dir, "ref_upload.png")
-            with open(ref_path, "wb") as f:
-                f.write(f1.getvalue())
-    with c_u2:
-        f2 = st.file_uploader("Upload Target Tile (OHRC / IIRS)", type=["png", "jpg", "jpeg"])
-        if f2 is not None:
-            target_path = os.path.join(temp_dir, "tgt_upload.png")
-            with open(target_path, "wb") as f:
-                f.write(f2.getvalue())
+    ref_path = "ref_pair2.jpeg"
+    target_path = "target_pair2.jpeg"
+    pair_description = (
+        "Stress-testing the pipeline against substantial illumination drift and local terrain shadow inversions."
+    )
 
-# Check that files exist and are non-empty
-if ref_path and target_path and os.path.exists(ref_path) and os.path.exists(target_path):
-    img_ref_preview = cv2.imread(ref_path, cv2.IMREAD_GRAYSCALE)
-    img_tgt_preview = cv2.imread(target_path, cv2.IMREAD_GRAYSCALE)
+st.info(pair_description)
 
-    if img_ref_preview is not None and img_tgt_preview is not None:
-        c1, c2 = st.columns(2)
-        with c1:
-            st.image(img_ref_preview, caption="Base Reference Tile (TMC / LRO)", use_container_width=True)
-        with c2:
-            st.image(img_tgt_preview, caption="Unregistered Target Tile (OHRC / IIRS)", use_container_width=True)
+# Ensure images exist on disk
+if os.path.exists(ref_path) and os.path.exists(target_path):
+    img_ref = cv2.imread(ref_path, cv2.IMREAD_GRAYSCALE)
+    img_tgt = cv2.imread(target_path, cv2.IMREAD_GRAYSCALE)
 
-        if st.button("⚡ Execute Sub-Pixel Registration", type="primary", use_container_width=True):
-            aligned = None
-            blend = None
-            matches_plot = None
-            inliers = 0
-            ratio = 0.0
+    c1, c2 = st.columns(2)
+    with c1:
+        st.subheader("Base Reference Frame")
+        st.image(img_ref, caption="Static reference basemap (LROC NAC)", use_container_width=True)
+    with c2:
+        st.subheader("Unregistered Target Frame")
+        st.image(img_tgt, caption="Newly acquired target tile to register (ISRO TMC)", use_container_width=True)
 
-            with st.spinner("Extracting LoFTR structural features & computing MAGSAC++ homography..."):
-                t0 = time.time()
-                try:
-                    aligned, blend, matches_plot, inliers, ratio = run_luna_align(ref_path, target_path)
-                    latency = round(time.time() - t0, 2)
-                except Exception as err:
-                    st.error(f"Processing Error: {err}")
+    if st.button("⚡ Run Registration Pipeline", type="primary", use_container_width=True):
+        aligned = None
+        blend = None
+        matches_plot = None
+        inliers = 0
+        ratio = 0.0
+        rmse = 0.0
 
-            if aligned is not None:
-                st.success("Registration Converged Successfully!")
+        with st.spinner("Processing: Normalizing contrast -> Extracting LoFTR features -> Running MAGSAC++..."):
+            t0 = time.time()
+            try:
+                aligned, blend, matches_plot, inliers, ratio, rmse = run_luna_align(ref_path, target_path)
+                latency = round(time.time() - t0, 2)
+            except Exception as e:
+                st.error(f"Execution Error: {e}")
 
-                # Metric Cards
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("Verified Inliers", f"{inliers:,} pts")
-                m2.metric("Inlier Ratio", f"{ratio:.1f}%")
-                m3.metric("Reprojection RMSE", "0.42 px (Sub-pixel)")
-                m4.metric("Engine Latency", f"{latency} s")
+        if aligned is not None:
+            st.success(f"Alignment converged in {latency} seconds with {inliers:,} verified tie-points.")
 
-                st.divider()
+            # Metric Cards
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Verified Inliers", f"{inliers:,} pts")
+            m2.metric("Inlier Consistency", f"{ratio:.1f}%")
+            m3.metric("Reprojection RMSE", f"{rmse} px")
+            m4.metric("Engine Latency", f"{latency} s")
 
-                # 1. Correspondence Vector Map
-                st.subheader("1. Deep Correspondence Feature Map")
-                st.image(matches_plot, caption="Green vectors indicate geometrically consistent tie-points", use_container_width=True)
+            st.divider()
 
-                # 2. 50/50 Overlay Blend
-                st.subheader("2. 50/50 Registered Overlay Blend")
-                st.image(blend, caption="Fused Reference + Warped Target (Visual overlap inspection)", use_container_width=True)
+            # Technical Workflow Breakdown
+            with st.expander("ℹ️ How the pipeline processed these images", expanded=True):
+                st.markdown("""
+                1. **Tile Normalization (CLAHE):** Applied localized histogram equalization to balance extreme contrast between pitch-black crater shadows and bright rims.
+                2. **Feature Extraction (LoFTR Transformer):** Detected structural landmark points using self- and cross-attention, correlating crater shapes even where shadow directions changed.
+                3. **Outlier Filtering (MAGSAC++):** Identified and discarded inconsistent match points caused by moving shadows, keeping only geometrically stable tie-points.
+                4. **Homography Warping:** Applied a 3x3 projective transformation matrix to warp the target image into exact coordinate alignment with the reference basemap.
+                """)
 
-                # 3. Interactive Split Slider
-                st.subheader("3. Interactive Alignment Inspection")
-                st.write("Drag the slider to verify crater rim alignment between frames:")
-                image_comparison(
-                    img1=Image.fromarray(cv2.resize(img_ref_preview, (640, 640))),
-                    img2=Image.fromarray(aligned),
-                    label1="Reference Basemap",
-                    label2="LunaAlign Registered Target"
-                )
-            else:
-                st.error(f"Alignment failed: Only {inliers} inliers found. Ensure overlapping terrain exists between frames.")
-    else:
-        st.warning("Could not decode the selected image files. Please verify the image inputs.")
+            st.divider()
+
+            # 1. Matching lines
+            st.subheader("1. Landmark Correspondence Map")
+            st.image(
+                matches_plot,
+                caption="Green lines show valid tie-points connecting identical crater rim features between images.",
+                use_container_width=True
+            )
+
+            # 2. 50/50 Blend
+            st.subheader("2. 50/50 Blended Overlay")
+            st.image(
+                blend,
+                caption="Combined view of both images. Sharp crater rims without double edges or blur confirm proper alignment.",
+                use_container_width=True
+            )
+
+            # 3. Interactive Split Slider
+            st.subheader("3. Interactive Split-Screen Slider")
+            st.write("Drag the handle left and right to inspect how crater edges match between the two frames:")
+            image_comparison(
+                img1=Image.fromarray(cv2.resize(img_ref, (640, 640))),
+                img2=Image.fromarray(aligned),
+                label1="Reference Basemap",
+                label2="Registered Target"
+            )
+        else:
+            st.error("Registration failed. The selected tiles did not yield enough consistent landmarks.")
 else:
-    st.info("Select a preset or upload both images above to proceed.")
+    st.error("Image assets not found. Ensure the image files are uploaded to your repository.")
