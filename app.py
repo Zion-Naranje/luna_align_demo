@@ -26,7 +26,7 @@ pair_choice = st.sidebar.radio(
     ]
 )
 
-if pair_choice == "Pair 1: Central Crater Complex (TMC vs. LROC)":
+if pair_choice == "Pair 1":
     ref_path = "ref_pair1.jpeg"
     target_path = "target_pair1.jpeg"
     pair_description = (
