@@ -55,7 +55,7 @@ if os.path.exists(ref_path) and os.path.exists(target_path):
         st.subheader("Unregistered Target Frame")
         st.image(img_tgt, caption="Newly acquired target tile to register (ISRO TMC)", use_container_width=True)
 
-    if st.button("⚡ Run Registration Pipeline", type="primary", use_container_width=True):
+    if st.button(" Run Registration Test", type="primary", use_container_width=True):
         aligned = None
         blend = None
         matches_plot = None
