@@ -21,8 +21,8 @@ st.sidebar.header("Select Test Dataset")
 pair_choice = st.sidebar.radio(
     "Choose a lunar terrain pair to evaluate:",
     [
-        "Pair 1: Central Crater Complex (TMC vs. LROC)",
-        "Pair 2: Shadow Invariance Test (Shifted Illumination)"
+        "Pair 1",
+        "Pair 2"
     ]
 )
 
@@ -30,14 +30,13 @@ if pair_choice == "Pair 1: Central Crater Complex (TMC vs. LROC)":
     ref_path = "ref_pair1.jpeg"
     target_path = "target_pair1.jpeg"
     pair_description = (
-        "Evaluation of overlapping orbital frames showing the prominent central crater formation. "
-        "Notice the variations in crater rim shadows caused by different solar incidence angles."
+        "Variations in crater rim shadows caused by different solar incidence angles."
     )
 else:
-    ref_path = "ref_pair2.jpeg"
-    target_path = "target_pair2.jpeg"
+    ref_path = "ref_pair2.png"
+    target_path = "target_pair2.png"
     pair_description = (
-        "Stress-testing the pipeline against substantial illumination drift and local terrain shadow inversions."
+        "Testing against substantial illumination drift and local terrain shadow inversions."
     )
 
 st.info(pair_description)
@@ -50,12 +49,12 @@ if os.path.exists(ref_path) and os.path.exists(target_path):
     c1, c2 = st.columns(2)
     with c1:
         st.subheader("Base Reference Frame")
-        st.image(img_ref, caption="Static reference basemap (LROC NAC)", use_container_width=True)
+        st.image(img_ref, caption="Static reference basemap (LROC)", use_container_width=True)
     with c2:
         st.subheader("Unregistered Target Frame")
-        st.image(img_tgt, caption="Newly acquired target tile to register (ISRO TMC)", use_container_width=True)
+        st.image(img_tgt, caption="New target tile to register (ISRO)", use_container_width=True)
 
-    if st.button(" Run Registration Test", type="primary", use_container_width=True):
+    if st.button(" Run Test", type="primary", use_container_width=True):
         aligned = None
         blend = None
         matches_plot = None
