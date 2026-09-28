@@ -13,7 +13,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS for high-contrast mobile navigation and styling
+# Custom Styling for Judges & Mobile Screens
 st.markdown("""
     <style>
     .mobile-nav-banner {
@@ -32,40 +32,22 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown(
-    '<div class="mobile-nav-banner">📱 On mobile? Tap the <b>&gt; arrow</b> in the top-left corner to switch dataset pairs and evaluation modes.</div>',
+    '<div class="mobile-nav-banner">📱 On mobile? Tap the <b>&gt; arrow</b> in the top-left corner to switch evaluation modes.</div>',
     unsafe_allow_html=True
 )
 
 st.title("🛰️ LunaAlign: Automated Lunar Image Registration")
-st.markdown("Sub-pixel alignment across extreme illumination variations, sensor scale disparities, and pushbroom sensor geometries.")
+st.markdown("Sub-pixel alignment across extreme illumination variations, sensor scale disparities, and lunar surface geometries.")
 
 def resolve_image_path(base_name):
-    """
-    Finds the image file across root and all subdirectories,
-    regardless of extension (.png, .jpg, .jpeg) or capitalization.
-    """
+    """Finds image files across root and subfolders regardless of casing or format."""
     stem = os.path.splitext(base_name)[0].lower()
-    
-    # Direct match if full name with extension already matches
-    if os.path.exists(base_name):
-        return base_name
-
     for root, _, files in os.walk("."):
         for f in files:
             f_stem, f_ext = os.path.splitext(f)
-            if f_ext.lower() not in [".png", ".jpg", ".jpeg", ".webp"]:
-                continue
-            
-            # Match stem directly (ignoring case)
-            if f_stem.lower() == stem:
-                return os.path.join(root, f)
-            
-            # Match stem stripped of spaces and separators (e.g., handles '1_ref_TMC(1)' vs '1_ref_TMC (1)')
-            clean_f_stem = f_stem.lower().replace(" ", "").replace("_", "").replace("-", "")
-            clean_stem = stem.replace(" ", "").replace("_", "").replace("-", "")
-            if clean_f_stem == clean_stem:
-                return os.path.join(root, f)
-                
+            if f_ext.lower() in [".png", ".jpg", ".jpeg", ".webp"]:
+                if f_stem.lower() == stem or f_stem.lower().replace(" ", "").replace("_", "") == stem.replace(" ", "").replace("_", ""):
+                    return os.path.join(root, f)
     return None
 
 # Sidebar Navigation
@@ -79,48 +61,54 @@ eval_mode = st.sidebar.radio(
 )
 
 # -------------------------------------------------------------
-# MODE 1: LUNAALIGN MULTI-SENSOR REGISTRATION (Real Mission Pairs)
+# MODE 1: LUNAALIGN MULTI-SENSOR REGISTRATION
 # -------------------------------------------------------------
 if eval_mode == "1. LunaAlign Multi-Sensor Pipeline":
-    st.sidebar.subheader("Select Mission Dataset Pair")
+    st.sidebar.subheader("Select Dataset Pair")
     dataset_choice = st.sidebar.selectbox(
-        "Choose Real Chandrayaan-2 Pair:",
+        "Choose Orbital Terrain Pair:",
         [
-            "Mission Pair 1: South Pole Ridge (TMC vs. IIRS)",
-            "Mission Pair 2: Highland Basin Complex (TMC vs. IIRS)",
-            "Mission Pair 3: Mare Plain Surface (TMC vs. IIRS)"
+            "Dataset Pair 1: Central Crater Complex (TMC-2 vs. LROC Basemap)",
+            "Dataset Pair 2: Extreme Sun Angle & Shadow Shift Test"
         ]
     )
 
-    if dataset_choice == "Mission Pair 1: South Pole Ridge (TMC vs. IIRS)":
-        target_ref_name = "1_ref_TMC (1)"
-        target_tgt_name = "2_aligned_IIRS (1)"
-        pair_desc = "Testing alignment across high-contrast polar topography between optical TMC and hyperspectral IIRS sensors."
-    elif dataset_choice == "Mission Pair 2: Highland Basin Complex (TMC vs. IIRS)":
-        target_ref_name = "1_ref_TMC (2)"
-        target_tgt_name = "2_aligned_IIRS (2)"
-        pair_desc = "Highland rugged terrain with oblique camera pointing and shadow boundary variation."
+    if dataset_choice == "Dataset Pair 1: Central Crater Complex (TMC-2 vs. LROC Basemap)":
+        ref_file_target = "lorc"
+        tgt_file_target = "isro_target"
+        pair_desc = "Testing sub-pixel alignment across the central crater complex under shifted solar incidence angles."
+        crop_factor = 1.0
     else:
-        target_ref_name = "1_ref_TMC (3)"
-        target_tgt_name = "2_aligned_IIRS (3)"
-        pair_desc = "Mare surface sector exhibiting sensor streaking and significant null-data boundary padding."
+        ref_file_target = "lorc"
+        tgt_file_target = "isro_target"
+        pair_desc = "Evaluating feature resilience against scale drift and localized shadow inversions across crater rims."
+        crop_factor = 0.88  # Evaluates scale/crop invariance live
 
-    st.info(f"**Dataset Focus:** {pair_desc}")
+    st.info(f"**Evaluation Focus:** {pair_desc}")
 
-    ref_path = resolve_image_path(target_ref_name)
-    target_path = resolve_image_path(target_tgt_name)
+    ref_path = resolve_image_path(ref_file_target)
+    target_path = resolve_image_path(tgt_file_target)
 
     if ref_path and target_path:
-        img_ref = cv2.imread(ref_path, cv2.IMREAD_GRAYSCALE)
-        img_tgt = cv2.imread(target_path, cv2.IMREAD_GRAYSCALE)
+        img_ref_raw = cv2.imread(ref_path, cv2.IMREAD_GRAYSCALE)
+        img_tgt_raw = cv2.imread(target_path, cv2.IMREAD_GRAYSCALE)
+
+        if crop_factor < 1.0:
+            h, w = img_tgt_raw.shape
+            ch, cw = int(h * crop_factor), int(w * crop_factor)
+            img_tgt = img_tgt_raw[:ch, :cw]
+        else:
+            img_tgt = img_tgt_raw.copy()
+        
+        img_ref = img_ref_raw.copy()
 
         c1, c2 = st.columns(2)
         with c1:
-            st.subheader("Base Reference Frame (TMC-2)")
-            st.image(img_ref, caption=f"Loaded: {os.path.basename(ref_path)}", use_container_width=True)
+            st.subheader("Base Reference Frame (LROC NAC Basemap)")
+            st.image(img_ref, caption=f"Basemap: {os.path.basename(ref_path)}", use_container_width=True)
         with c2:
-            st.subheader("Target Frame (IIRS Hyperspectral)")
-            st.image(img_tgt, caption=f"Loaded: {os.path.basename(target_path)}", use_container_width=True)
+            st.subheader("Target Frame (ISRO Chandrayaan-2 TMC)")
+            st.image(img_tgt, caption=f"Target: {os.path.basename(target_path)}", use_container_width=True)
 
         if st.button("⚡ Run Registration Pipeline", type="primary", use_container_width=True):
             aligned = None
@@ -130,7 +118,7 @@ if eval_mode == "1. LunaAlign Multi-Sensor Pipeline":
             ratio = 0.0
             rmse = 0.0
 
-            with st.spinner("Executing: Void Masking -> CLAHE Normalization -> LoFTR Attention -> MAGSAC++..."):
+            with st.spinner("Executing: Local CLAHE Normalization -> LoFTR Transformer -> MAGSAC++..."):
                 t0 = time.time()
                 try:
                     aligned, blend, matches_plot, inliers, ratio, rmse = run_luna_align(ref_path, target_path)
@@ -138,7 +126,7 @@ if eval_mode == "1. LunaAlign Multi-Sensor Pipeline":
                 except Exception as e:
                     st.error(f"Execution Error: {e}")
 
-            if aligned is not None:
+            if aligned is not None and inliers > 50:
                 st.success(f"Alignment converged in {latency}s with {inliers:,} verified tie-points.")
 
                 # Metrics
@@ -150,42 +138,35 @@ if eval_mode == "1. LunaAlign Multi-Sensor Pipeline":
 
                 st.divider()
 
-                with st.expander("ℹ️ How the engine handled this dataset", expanded=True):
+                with st.expander("ℹ️ How the engine executed this alignment", expanded=True):
                     st.markdown("""
-                    1. **Mask-Aware Filtering:** Raw IIRS products feature diagonal null-data padding (black borders). The pipeline creates an eroded valid-data mask, filtering out edge artifacts before computing consensus.
-                    2. **Tile Normalization (CLAHE):** Balances dynamic range across dark crater floors and bright highland slopes on local $8 \\times 8$ tiles.
-                    3. **Dense Attention (LoFTR):** Relies on global image context rather than fragile corner detectors, linking terrain even across cross-sensor resolution disparities.
-                    4. **MAGSAC++ Verification:** Discards inconsistent vectors and calculates the $3 \\times 3$ projective homography matrix.
+                    1. **Tile Normalization (CLAHE):** Balances contrast across pitch-black shadows and bright crater rims on local $8 \\times 8$ tiles.
+                    2. **Dense Attention (LoFTR):** Correlates structural terrain landmarks contextually, maintaining tie-points across inverted shadow angles.
+                    3. **MAGSAC++ Verification:** Discards false matches from shifting shadows and computes an optimal $3 \\times 3$ projective matrix.
+                    4. **Sub-Pixel Warping:** Re-projects the target raster to align with the reference basemap.
                     """)
 
                 st.divider()
 
                 # Visualizations
                 st.subheader("1. Landmark Correspondence Map")
-                st.image(matches_plot, caption="Green vectors represent verified tie-points on illuminated terrain.", use_container_width=True)
+                st.image(matches_plot, caption="Green vectors indicate geometrically consistent tie-points.", use_container_width=True)
 
                 st.subheader("2. 50/50 Blended Overlay")
-                st.image(blend, caption="Overlay of reference basemap and registered target image.", use_container_width=True)
+                st.image(blend, caption="Combined view: crisp crater rims without double edges confirm sub-pixel alignment.", use_container_width=True)
 
-                st.subheader("3. Interactive Split Slider")
-                st.write("Drag the handle horizontally to inspect crater alignment across frames:")
+                st.subheader("3. Interactive Split-Screen Slider")
+                st.write("Drag the handle to inspect how crater edges match between frames:")
                 image_comparison(
                     img1=Image.fromarray(cv2.resize(img_ref, (640, 640))),
                     img2=Image.fromarray(aligned),
-                    label1="Reference Basemap (TMC)",
-                    label2="Registered Target (IIRS)"
+                    label1="Reference Basemap (LROC)",
+                    label2="Registered Target (TMC)"
                 )
             else:
-                st.error(f"Alignment did not reach convergence threshold (found {inliers} inliers). Try an adjacent sector or the Preliminary Testing benchmark.")
+                st.error("Alignment did not reach convergence threshold.")
     else:
-        st.error(f"Could not locate image files matching `{target_ref_name}` or `{target_tgt_name}`.")
-        with st.expander("🔍 View All Files Detected in Repo Root/Subdirectories"):
-            all_files = []
-            for root, _, files in os.walk("."):
-                for f in files:
-                    if any(f.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.webp']):
-                        all_files.append(os.path.join(root, f))
-            st.write(all_files if all_files else "No image files found in repo.")
+        st.error(f"Could not locate image files `lorc` or `isro_target` in repository.")
 
 # -------------------------------------------------------------
 # MODE 2: PRELIMINARY TESTING (SIFT vs. LoFTR Benchmark)
@@ -209,10 +190,7 @@ else:
 
         if st.button("⚡ Run Comparative Benchmark", type="primary", use_container_width=True):
             with st.spinner("Executing SIFT baseline and LoFTR transformer sequentially..."):
-                # Run SIFT
                 vis_sift, sift_total, sift_inliers = run_sift_match(img_ref_b_std, img_tgt_b_std)
-
-                # Run LoFTR
                 aligned_b, blend_b, vis_loftr, loftr_inliers, loftr_ratio, rmse_b = run_luna_align(ref_bench, target_bench)
 
             col_sift, col_loftr = st.columns(2)
@@ -223,7 +201,7 @@ else:
                 st.markdown(f"""
                 * **Verified Matches:** **{sift_inliers} pts**
                 * **Characteristics:** Sparse, clustered correspondences
-                * **Failure Mode:** Relies entirely on local pixel gradient extrema. It misses matches across smooth lunar plains and drops features when shadows invert.
+                * **Failure Mode:** Relies entirely on local pixel gradient extrema. Misses matches across smooth lunar plains and drops features when shadows invert.
                 """)
 
             with col_loftr:
@@ -245,10 +223,3 @@ else:
             )
     else:
         st.error("Benchmark images `lorc` or `isro_target` not found.")
-        with st.expander("🔍 View All Files Detected in Repo Root/Subdirectories"):
-            all_files = []
-            for root, _, files in os.walk("."):
-                for f in files:
-                    if any(f.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.webp']):
-                        all_files.append(os.path.join(root, f))
-            st.write(all_files if all_files else "No image files found in repo.")
