@@ -2,16 +2,21 @@ import os
 import cv2
 import torch
 import numpy as np
-import kornia as K
-import kornia.feature as KF
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 MATCHER = None
 
 def _get_matcher():
+    """Lazy-load LoFTR matcher to prevent Streamlit Cloud boot-time ImportErrors."""
     global MATCHER
     if MATCHER is None:
-        MATCHER = KF.LoFTR(pretrained="outdoor").to(DEVICE).eval()
+        try:
+            from kornia.feature import LoFTR
+        except ImportError:
+            import kornia.feature as KF
+            LoFTR = KF.LoFTR
+            
+        MATCHER = LoFTR(pretrained="outdoor").to(DEVICE).eval()
     return MATCHER
 
 def apply_clahe(img):
@@ -104,7 +109,6 @@ def run_luna_align(ref_path, target_path):
     target_img = cv2.resize(target_img, (w_std, h_std))
 
     # Mask out null-data/black padding areas (intensity <= 15)
-    # Erode slightly so border boundaries do not get picked up as features
     kernel = np.ones((5, 5), np.uint8)
     mask_ref = cv2.erode((ref_img > 15).astype(np.uint8), kernel)
     mask_tgt = cv2.erode((target_img > 15).astype(np.uint8), kernel)
@@ -126,7 +130,7 @@ def run_luna_align(ref_path, target_path):
     pts0 = corrs["keypoints0"].cpu().numpy()
     pts1 = corrs["keypoints1"].cpu().numpy()
 
-    # Filter out any candidate matches that fall inside black margins
+    # Filter out candidate matches that fall inside black margins
     valid_pts = []
     for i in range(len(pts0)):
         x0, y0 = int(round(pts0[i][0])), int(round(pts0[i][1]))
