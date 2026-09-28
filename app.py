@@ -3,7 +3,6 @@ import cv2
 import numpy as np
 import time
 import os
-import glob
 from PIL import Image
 from streamlit_image_comparison import image_comparison
 from engine import run_luna_align, run_sift_match
@@ -40,25 +39,33 @@ st.markdown(
 st.title("🛰️ LunaAlign: Automated Lunar Image Registration")
 st.markdown("Sub-pixel alignment across extreme illumination variations, sensor scale disparities, and pushbroom sensor geometries.")
 
-def resolve_image_path(target_filename):
+def resolve_image_path(base_name):
     """
-    Robust resolver: finds the file in root or any subfolder,
-    handling case sensitivity, spaces, and parenthesis variations.
+    Finds the image file across root and all subdirectories,
+    regardless of extension (.png, .jpg, .jpeg) or capitalization.
     """
-    if os.path.exists(target_filename):
-        return target_filename
+    stem = os.path.splitext(base_name)[0].lower()
     
-    # Check recursively in case files were committed inside subfolders
+    # Direct match if full name with extension already matches
+    if os.path.exists(base_name):
+        return base_name
+
     for root, _, files in os.walk("."):
         for f in files:
-            # Exact match ignoring case
-            if f.lower() == target_filename.lower():
+            f_stem, f_ext = os.path.splitext(f)
+            if f_ext.lower() not in [".png", ".jpg", ".jpeg", ".webp"]:
+                continue
+            
+            # Match stem directly (ignoring case)
+            if f_stem.lower() == stem:
                 return os.path.join(root, f)
-            # Match ignoring spaces, hyphens, and underscores
-            clean_f = f.lower().replace(" ", "").replace("_", "").replace("-", "")
-            clean_target = target_filename.lower().replace(" ", "").replace("_", "").replace("-", "")
-            if clean_f == clean_target:
+            
+            # Match stem stripped of spaces and separators (e.g., handles '1_ref_TMC(1)' vs '1_ref_TMC (1)')
+            clean_f_stem = f_stem.lower().replace(" ", "").replace("_", "").replace("-", "")
+            clean_stem = stem.replace(" ", "").replace("_", "").replace("-", "")
+            if clean_f_stem == clean_stem:
                 return os.path.join(root, f)
+                
     return None
 
 # Sidebar Navigation
@@ -86,16 +93,16 @@ if eval_mode == "1. LunaAlign Multi-Sensor Pipeline":
     )
 
     if dataset_choice == "Mission Pair 1: South Pole Ridge (TMC vs. IIRS)":
-        target_ref_name = "1_ref_TMC (1).jpg"
-        target_tgt_name = "2_aligned_IIRS (1).jpg"
+        target_ref_name = "1_ref_TMC (1)"
+        target_tgt_name = "2_aligned_IIRS (1)"
         pair_desc = "Testing alignment across high-contrast polar topography between optical TMC and hyperspectral IIRS sensors."
     elif dataset_choice == "Mission Pair 2: Highland Basin Complex (TMC vs. IIRS)":
-        target_ref_name = "1_ref_TMC (2).jpg"
-        target_tgt_name = "2_aligned_IIRS (2).jpg"
+        target_ref_name = "1_ref_TMC (2)"
+        target_tgt_name = "2_aligned_IIRS (2)"
         pair_desc = "Highland rugged terrain with oblique camera pointing and shadow boundary variation."
     else:
-        target_ref_name = "1_ref_TMC (3).jpg"
-        target_tgt_name = "2_aligned_IIRS (3).jpg"
+        target_ref_name = "1_ref_TMC (3)"
+        target_tgt_name = "2_aligned_IIRS (3)"
         pair_desc = "Mare surface sector exhibiting sensor streaking and significant null-data boundary padding."
 
     st.info(f"**Dataset Focus:** {pair_desc}")
@@ -110,10 +117,10 @@ if eval_mode == "1. LunaAlign Multi-Sensor Pipeline":
         c1, c2 = st.columns(2)
         with c1:
             st.subheader("Base Reference Frame (TMC-2)")
-            st.image(img_ref, caption=f"Resolved: {ref_path}", use_container_width=True)
+            st.image(img_ref, caption=f"Loaded: {os.path.basename(ref_path)}", use_container_width=True)
         with c2:
             st.subheader("Target Frame (IIRS Hyperspectral)")
-            st.image(img_tgt, caption=f"Resolved: {target_path}", use_container_width=True)
+            st.image(img_tgt, caption=f"Loaded: {os.path.basename(target_path)}", use_container_width=True)
 
         if st.button("⚡ Run Registration Pipeline", type="primary", use_container_width=True):
             aligned = None
@@ -171,12 +178,12 @@ if eval_mode == "1. LunaAlign Multi-Sensor Pipeline":
             else:
                 st.error(f"Alignment did not reach convergence threshold (found {inliers} inliers). Try an adjacent sector or the Preliminary Testing benchmark.")
     else:
-        st.error(f"Image files `{target_ref_name}` or `{target_tgt_name}` could not be located in the repository.")
+        st.error(f"Could not locate image files matching `{target_ref_name}` or `{target_tgt_name}`.")
         with st.expander("🔍 View All Files Detected in Repo Root/Subdirectories"):
             all_files = []
             for root, _, files in os.walk("."):
                 for f in files:
-                    if any(f.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png']):
+                    if any(f.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.webp']):
                         all_files.append(os.path.join(root, f))
             st.write(all_files if all_files else "No image files found in repo.")
 
@@ -190,8 +197,8 @@ else:
         "detector-free attention models are necessary for lunar terrain."
     )
 
-    ref_bench = resolve_image_path("lorc.JPG.jpeg")
-    target_bench = resolve_image_path("isro_target.jpeg")
+    ref_bench = resolve_image_path("lorc")
+    target_bench = resolve_image_path("isro_target")
 
     if ref_bench and target_bench:
         img_ref_b = cv2.imread(ref_bench, cv2.IMREAD_GRAYSCALE)
@@ -237,11 +244,11 @@ else:
                 "deep matching architecture for the LunaAlign core pipeline."
             )
     else:
-        st.error("Benchmark images `lorc.JPG.jpeg` or `isro_target.jpeg` not found.")
+        st.error("Benchmark images `lorc` or `isro_target` not found.")
         with st.expander("🔍 View All Files Detected in Repo Root/Subdirectories"):
             all_files = []
             for root, _, files in os.walk("."):
                 for f in files:
-                    if any(f.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png']):
+                    if any(f.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.webp']):
                         all_files.append(os.path.join(root, f))
             st.write(all_files if all_files else "No image files found in repo.")
