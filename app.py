@@ -39,16 +39,18 @@ st.markdown(
 st.title("🛰️ LunaAlign: Automated Lunar Image Registration")
 st.markdown("Sub-pixel alignment across extreme illumination variations, sensor scale disparities, and lunar surface geometries.")
 
-def resolve_image_path(base_name):
-    """Finds image files across root and subfolders regardless of casing or format."""
-    stem = os.path.splitext(base_name)[0].lower()
+def get_all_images():
+    """Scans root and subfolders for any image file."""
+    image_paths = []
     for root, _, files in os.walk("."):
         for f in files:
-            f_stem, f_ext = os.path.splitext(f)
-            if f_ext.lower() in [".png", ".jpg", ".jpeg", ".webp"]:
-                if f_stem.lower() == stem or f_stem.lower().replace(" ", "").replace("_", "") == stem.replace(" ", "").replace("_", ""):
-                    return os.path.join(root, f)
-    return None
+            ext = os.path.splitext(f)[1].lower()
+            if ext in [".png", ".jpg", ".jpeg", ".webp"]:
+                rel_path = os.path.relpath(os.path.join(root, f), ".")
+                image_paths.append(rel_path)
+    return sorted(image_paths)
+
+all_images = get_all_images()
 
 # Sidebar Navigation
 st.sidebar.header("Evaluation Navigation")
@@ -60,55 +62,41 @@ eval_mode = st.sidebar.radio(
     ]
 )
 
+if not all_images:
+    st.error("No images found in the repository root or subfolders. Please upload your images to GitHub.")
+    st.stop()
+
 # -------------------------------------------------------------
 # MODE 1: LUNAALIGN MULTI-SENSOR REGISTRATION
 # -------------------------------------------------------------
 if eval_mode == "1. LunaAlign Multi-Sensor Pipeline":
-    st.sidebar.subheader("Select Dataset Pair")
-    dataset_choice = st.sidebar.selectbox(
-        "Choose Orbital Terrain Pair:",
-        [
-            "Dataset Pair 1: Central Crater Complex (TMC-2 vs. LROC Basemap)",
-            "Dataset Pair 2: Extreme Sun Angle & Shadow Shift Test"
-        ]
-    )
+    st.sidebar.subheader("Select Image Pair")
+    
+    # Try to set sensible defaults if matching files exist
+    default_ref_idx = 0
+    default_tgt_idx = min(1, len(all_images) - 1)
+    
+    for idx, path in enumerate(all_images):
+        low = path.lower()
+        if "lorc" in low or "ref" in low:
+            default_ref_idx = idx
+        elif "isro" in low or "target" in low or "aligned" in low:
+            default_tgt_idx = idx
 
-    if dataset_choice == "Dataset Pair 1: Central Crater Complex (TMC-2 vs. LROC Basemap)":
-        ref_file_target = "lorc"
-        tgt_file_target = "isro_target"
-        pair_desc = "Testing sub-pixel alignment across the central crater complex under shifted solar incidence angles."
-        crop_factor = 1.0
-    else:
-        ref_file_target = "lorc"
-        tgt_file_target = "isro_target"
-        pair_desc = "Evaluating feature resilience against scale drift and localized shadow inversions across crater rims."
-        crop_factor = 0.88  # Evaluates scale/crop invariance live
+    ref_path = st.sidebar.selectbox("Base Reference Image:", all_images, index=default_ref_idx)
+    target_path = st.sidebar.selectbox("Target Image to Align:", all_images, index=default_tgt_idx)
 
-    st.info(f"**Evaluation Focus:** {pair_desc}")
+    img_ref = cv2.imread(ref_path, cv2.IMREAD_GRAYSCALE)
+    img_tgt = cv2.imread(target_path, cv2.IMREAD_GRAYSCALE)
 
-    ref_path = resolve_image_path(ref_file_target)
-    target_path = resolve_image_path(tgt_file_target)
-
-    if ref_path and target_path:
-        img_ref_raw = cv2.imread(ref_path, cv2.IMREAD_GRAYSCALE)
-        img_tgt_raw = cv2.imread(target_path, cv2.IMREAD_GRAYSCALE)
-
-        if crop_factor < 1.0:
-            h, w = img_tgt_raw.shape
-            ch, cw = int(h * crop_factor), int(w * crop_factor)
-            img_tgt = img_tgt_raw[:ch, :cw]
-        else:
-            img_tgt = img_tgt_raw.copy()
-        
-        img_ref = img_ref_raw.copy()
-
+    if img_ref is not None and img_tgt is not None:
         c1, c2 = st.columns(2)
         with c1:
-            st.subheader("Base Reference Frame (LROC NAC Basemap)")
-            st.image(img_ref, caption=f"Basemap: {os.path.basename(ref_path)}", use_container_width=True)
+            st.subheader("Base Reference Frame")
+            st.image(img_ref, caption=f"File: {os.path.basename(ref_path)} ({img_ref.shape[1]}x{img_ref.shape[0]})", use_container_width=True)
         with c2:
-            st.subheader("Target Frame (ISRO Chandrayaan-2 TMC)")
-            st.image(img_tgt, caption=f"Target: {os.path.basename(target_path)}", use_container_width=True)
+            st.subheader("Target Frame to Register")
+            st.image(img_tgt, caption=f"File: {os.path.basename(target_path)} ({img_tgt.shape[1]}x{img_tgt.shape[0]})", use_container_width=True)
 
         if st.button("⚡ Run Registration Pipeline", type="primary", use_container_width=True):
             aligned = None
@@ -126,7 +114,7 @@ if eval_mode == "1. LunaAlign Multi-Sensor Pipeline":
                 except Exception as e:
                     st.error(f"Execution Error: {e}")
 
-            if aligned is not None and inliers > 50:
+            if aligned is not None and inliers >= 4:
                 st.success(f"Alignment converged in {latency}s with {inliers:,} verified tie-points.")
 
                 # Metrics
@@ -160,13 +148,13 @@ if eval_mode == "1. LunaAlign Multi-Sensor Pipeline":
                 image_comparison(
                     img1=Image.fromarray(cv2.resize(img_ref, (640, 640))),
                     img2=Image.fromarray(aligned),
-                    label1="Reference Basemap (LROC)",
-                    label2="Registered Target (TMC)"
+                    label1="Reference Basemap",
+                    label2="Registered Target"
                 )
             else:
-                st.error("Alignment did not reach convergence threshold.")
+                st.warning(f"Registration threshold not reached (found {inliers} inliers). Ensure the two selected images share overlapping terrain.")
     else:
-        st.error(f"Could not locate image files `lorc` or `isro_target` in repository.")
+        st.error("Failed to decode the selected image files.")
 
 # -------------------------------------------------------------
 # MODE 2: PRELIMINARY TESTING (SIFT vs. LoFTR Benchmark)
@@ -178,12 +166,23 @@ else:
         "detector-free attention models are necessary for lunar terrain."
     )
 
-    ref_bench = resolve_image_path("lorc")
-    target_bench = resolve_image_path("isro_target")
+    st.sidebar.subheader("Select Benchmark Pair")
+    default_ref_b = 0
+    default_tgt_b = min(1, len(all_images) - 1)
+    for idx, path in enumerate(all_images):
+        low = path.lower()
+        if "lorc" in low:
+            default_ref_b = idx
+        elif "isro" in low:
+            default_tgt_b = idx
 
-    if ref_bench and target_bench:
-        img_ref_b = cv2.imread(ref_bench, cv2.IMREAD_GRAYSCALE)
-        img_tgt_b = cv2.imread(target_bench, cv2.IMREAD_GRAYSCALE)
+    ref_bench = st.sidebar.selectbox("Reference Frame:", all_images, index=default_ref_b, key="bench_ref")
+    target_bench = st.sidebar.selectbox("Target Frame:", all_images, index=default_tgt_b, key="bench_tgt")
+
+    img_ref_b = cv2.imread(ref_bench, cv2.IMREAD_GRAYSCALE)
+    img_tgt_b = cv2.imread(target_bench, cv2.IMREAD_GRAYSCALE)
+
+    if img_ref_b is not None and img_tgt_b is not None:
         h_std, w_std = 640, 640
         img_ref_b_std = cv2.resize(img_ref_b, (w_std, h_std))
         img_tgt_b_std = cv2.resize(img_tgt_b, (w_std, h_std))
@@ -222,4 +221,4 @@ else:
                 "deep matching architecture for the LunaAlign core pipeline."
             )
     else:
-        st.error("Benchmark images `lorc` or `isro_target` not found.")
+        st.error("Failed to decode the selected benchmark images.")
