@@ -39,18 +39,27 @@ st.markdown(
 st.title("🛰️ LunaAlign: Automated Lunar Image Registration")
 st.markdown("Sub-pixel alignment across extreme illumination variations, sensor scale disparities, and lunar surface geometries.")
 
-def get_all_images():
-    """Scans root and subfolders for any image file."""
+def get_images_in_dir(directory):
+    """Return all supported image files in a folder recursively."""
+    if not os.path.isdir(directory):
+        return []
+
     image_paths = []
-    for root, _, files in os.walk("."):
+    for root, _, files in os.walk(directory):
         for f in files:
             ext = os.path.splitext(f)[1].lower()
-            if ext in [".png", ".jpg", ".jpeg", ".webp"]:
+            if ext in [".png", ".jpg", ".jpeg", ".webp", ".JPG", ".JPEG"]:
                 rel_path = os.path.relpath(os.path.join(root, f), ".")
                 image_paths.append(rel_path)
     return sorted(image_paths)
 
-all_images = get_all_images()
+
+def get_pair_images(pair_name):
+    """Return the image pair for a named pair folder, using the first two images found."""
+    pair_dir = os.path.join("pairs", pair_name)
+    images = get_images_in_dir(pair_dir)
+    return images[:2]
+
 
 # Sidebar Navigation
 st.sidebar.header("Evaluation Navigation")
@@ -62,30 +71,25 @@ eval_mode = st.sidebar.radio(
     ]
 )
 
-if not all_images:
-    st.error("No images found in the repository root or subfolders. Please upload your images to GitHub.")
-    st.stop()
+pair_labels = [f"pair{i}" for i in range(1, 5)]
+preliminary_images = get_images_in_dir("preliminaryTesting")
+
+if not preliminary_images:
+    st.warning("No images found in preliminaryTesting/. Add the benchmark images there before running the comparison test.")
 
 # -------------------------------------------------------------
 # MODE 1: LUNAALIGN MULTI-SENSOR REGISTRATION
 # -------------------------------------------------------------
 if eval_mode == "1. LunaAlign Multi-Sensor Pipeline":
-    st.sidebar.subheader("Select Image Pair")
-    
-    # Try to set sensible defaults if matching files exist
-    default_ref_idx = 0
-    default_tgt_idx = min(1, len(all_images) - 1)
-    
-    for idx, path in enumerate(all_images):
-        low = path.lower()
-        if "lorc" in low or "ref" in low:
-            default_ref_idx = idx
-        elif "isro" in low or "target" in low or "aligned" in low:
-            default_tgt_idx = idx
+    st.sidebar.subheader("Select Pair")
+    selected_pair = st.sidebar.radio("Choose Pair:", pair_labels, index=0)
+    pair_images = get_pair_images(selected_pair)
 
-    ref_path = st.sidebar.selectbox("Base Reference Image:", all_images, index=default_ref_idx)
-    target_path = st.sidebar.selectbox("Target Image to Align:", all_images, index=default_tgt_idx)
+    if len(pair_images) < 2:
+        st.error(f"No valid image pair found in pairs/{selected_pair}. Add the reference and target images for this pair folder.")
+        st.stop()
 
+    ref_path, target_path = pair_images[0], pair_images[1]
     img_ref = cv2.imread(ref_path, cv2.IMREAD_GRAYSCALE)
     img_tgt = cv2.imread(target_path, cv2.IMREAD_GRAYSCALE)
 
@@ -166,19 +170,11 @@ else:
         "detector-free attention models are necessary for lunar terrain."
     )
 
-    st.sidebar.subheader("Select Benchmark Pair")
-    default_ref_b = 0
-    default_tgt_b = min(1, len(all_images) - 1)
-    for idx, path in enumerate(all_images):
-        low = path.lower()
-        if "lorc" in low:
-            default_ref_b = idx
-        elif "isro" in low:
-            default_tgt_b = idx
+    if len(preliminary_images) < 2:
+        st.error("The preliminaryTesting folder must contain at least two image files for the benchmark.")
+        st.stop()
 
-    ref_bench = st.sidebar.selectbox("Reference Frame:", all_images, index=default_ref_b, key="bench_ref")
-    target_bench = st.sidebar.selectbox("Target Frame:", all_images, index=default_tgt_b, key="bench_tgt")
-
+    ref_bench, target_bench = preliminary_images[0], preliminary_images[1]
     img_ref_b = cv2.imread(ref_bench, cv2.IMREAD_GRAYSCALE)
     img_tgt_b = cv2.imread(target_bench, cv2.IMREAD_GRAYSCALE)
 
@@ -190,7 +186,14 @@ else:
         if st.button("⚡ Run Comparative Benchmark", type="primary", use_container_width=True):
             with st.spinner("Executing SIFT baseline and LoFTR transformer sequentially..."):
                 vis_sift, sift_total, sift_inliers = run_sift_match(img_ref_b_std, img_tgt_b_std)
-                aligned_b, blend_b, vis_loftr, loftr_inliers, loftr_ratio, rmse_b = run_luna_align(ref_bench, target_bench)
+
+                try:
+                    aligned_b, blend_b, vis_loftr, loftr_inliers, loftr_ratio, rmse_b = run_luna_align(ref_bench, target_bench)
+                    loftr_available = True
+                except Exception as exc:
+                    loftr_available = False
+                    vis_loftr = cv2.cvtColor(np.hstack((img_ref_b_std, img_tgt_b_std)), cv2.COLOR_GRAY2RGB)
+                    loftr_error = str(exc)
 
             col_sift, col_loftr = st.columns(2)
 
@@ -205,20 +208,28 @@ else:
 
             with col_loftr:
                 st.subheader("LoFTR — Deep Attention Matcher")
-                st.image(vis_loftr, caption=f"LoFTR Inliers: {loftr_inliers:,} verified matches", use_container_width=True)
-                st.markdown(f"""
-                * **Verified Matches:** **{loftr_inliers:,} pts**
-                * **Characteristics:** Uniform, dense surface coverage
-                * **Advantage:** Eliminates the local detector step. Self- and cross-attention correlate shapes globally, keeping tie-points intact across low-texture regions.
-                """)
+                if loftr_available:
+                    st.image(vis_loftr, caption=f"LoFTR Inliers: {loftr_inliers:,} verified matches", use_container_width=True)
+                    st.markdown(f"""
+                    * **Verified Matches:** **{loftr_inliers:,} pts**
+                    * **Characteristics:** Uniform, dense surface coverage
+                    * **Advantage:** Eliminates the local detector step. Self- and cross-attention correlate shapes globally, keeping tie-points intact across low-texture regions.
+                    """)
+                else:
+                    st.image(vis_loftr, caption="LoFTR unavailable in this environment", use_container_width=True)
+                    st.warning(
+                        "LoFTR could not run because the pretrained model weights could not be downloaded. "
+                        "This is usually caused by local SSL certificate validation issues. "
+                        "The SIFT benchmark still works and can be used for comparison."
+                    )
 
-            st.divider()
-
-            ratio_mult = round(loftr_inliers / max(1, sift_inliers), 1)
-            st.info(
-                f"**Empirical Finding:** LoFTR recovered **{ratio_mult}× more valid correspondences** "
-                "than SIFT under identical illumination shifts. This validates our choice of a detector-free "
-                "deep matching architecture for the LunaAlign core pipeline."
-            )
+            if loftr_available:
+                st.divider()
+                ratio_mult = round(loftr_inliers / max(1, sift_inliers), 1)
+                st.info(
+                    f"**Empirical Finding:** LoFTR recovered **{ratio_mult}× more valid correspondences** "
+                    "than SIFT under identical illumination shifts. This validates our choice of a detector-free "
+                    "deep matching architecture for the LunaAlign core pipeline."
+                )
     else:
         st.error("Failed to decode the selected benchmark images.")
