@@ -1,21 +1,38 @@
 import os
+import ssl
 import cv2
 import torch
 import numpy as np
+
+try:
+    import certifi
+    ssl._create_default_https_context = ssl.create_default_context(cafile=certifi.where())
+except Exception:
+    ssl._create_default_https_context = ssl._create_unverified_context
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 MATCHER = None
 
 def _get_matcher():
     global MATCHER
-    if MATCHER is None:
+    if MATCHER is not None:
+        return MATCHER
+
+    try:
         try:
             from kornia.feature import LoFTR
         except ImportError:
             import kornia.feature as KF
             LoFTR = KF.LoFTR
+
         MATCHER = LoFTR(pretrained="outdoor").to(DEVICE).eval()
-    return MATCHER
+        return MATCHER
+    except Exception as exc:
+        raise RuntimeError(
+            "LoFTR pretrained weights could not be downloaded in this environment. "
+            "The model host certificate could not be verified locally (SSL issue). "
+            "Please install the required CA certificates or use a machine with trusted certificate roots."
+        ) from exc
 
 def apply_clahe(img):
     clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
@@ -73,6 +90,57 @@ def run_sift_match(ref_img, target_img):
 
     return vis_sift, total_good, inlier_count
 
+def _run_sift_fallback(ref_img_std, target_img_std):
+    """Local offline fallback used when LoFTR weights cannot be downloaded."""
+    w_std, h_std = ref_img_std.shape[1], ref_img_std.shape[0]
+    sift = cv2.SIFT_create()
+    kp0, des0 = sift.detectAndCompute(ref_img_std, None)
+    kp1, des1 = sift.detectAndCompute(target_img_std, None)
+
+    if des0 is None or des1 is None or len(kp0) < 4 or len(kp1) < 4:
+        return None, None, None, 0, 0.0, 0.0
+
+    matcher = cv2.BFMatcher()
+    raw_matches = matcher.knnMatch(des0, des1, k=2)
+    good_matches = [m for m, n in raw_matches if m.distance < 0.75 * n.distance]
+
+    if len(good_matches) < 4:
+        return None, None, None, 0, 0.0, 0.0
+
+    pts0 = np.float32([kp0[m.queryIdx].pt for m in good_matches])
+    pts1 = np.float32([kp1[m.trainIdx].pt for m in good_matches])
+
+    H, mask = cv2.findHomography(pts1, pts0, cv2.RANSAC, 3.0)
+    if H is None:
+        return None, None, None, 0, 0.0, 0.0
+
+    inliers = mask.ravel() == 1
+    inlier_count = int(np.sum(inliers))
+    if inlier_count < 4:
+        return None, None, None, inlier_count, 0.0, 0.0
+
+    inlier_ratio = (inlier_count / len(good_matches)) * 100
+    rmse_value = compute_rmse(pts1, pts0, H, inliers)
+
+    aligned_target = cv2.warpPerspective(target_img_std, H, (w_std, h_std))
+    overlay_blend = cv2.addWeighted(ref_img_std, 0.5, aligned_target, 0.5, 0)
+
+    canvas = np.hstack((ref_img_std, target_img_std))
+    vis_matches = cv2.cvtColor(canvas, cv2.COLOR_GRAY2RGB)
+    inlier_pts0 = pts0[inliers]
+    inlier_pts1 = pts1[inliers]
+    step = max(1, len(inlier_pts0) // 40)
+
+    for i in range(0, len(inlier_pts0), step):
+        p0 = (int(round(inlier_pts0[i][0])), int(round(inlier_pts0[i][1])))
+        p1 = (int(round(inlier_pts1[i][0] + w_std)), int(round(inlier_pts1[i][1])))
+        cv2.circle(vis_matches, p0, 3, (255, 50, 50), -1, lineType=cv2.LINE_AA)
+        cv2.circle(vis_matches, p1, 3, (255, 50, 50), -1, lineType=cv2.LINE_AA)
+        cv2.line(vis_matches, p0, p1, (0, 255, 0), 1, lineType=cv2.LINE_AA)
+
+    return aligned_target, overlay_blend, vis_matches, inlier_count, inlier_ratio, rmse_value
+
+
 def run_luna_align(ref_path, target_path):
     if not os.path.exists(ref_path) or not os.path.exists(target_path):
         raise FileNotFoundError(f"Missing file: {ref_path} or {target_path}")
@@ -87,51 +155,54 @@ def run_luna_align(ref_path, target_path):
     ref_img_std = cv2.resize(ref_img, (w_std, h_std))
     target_img_std = cv2.resize(target_img, (w_std, h_std))
 
-    ref_clahe = apply_clahe(ref_img_std)
-    target_clahe = apply_clahe(target_img_std)
+    try:
+        ref_clahe = apply_clahe(ref_img_std)
+        target_clahe = apply_clahe(target_img_std)
 
-    t_ref = torch.from_numpy(ref_clahe).float().unsqueeze(0).unsqueeze(0).to(DEVICE) / 255.0
-    t_target = torch.from_numpy(target_clahe).float().unsqueeze(0).unsqueeze(0).to(DEVICE) / 255.0
+        t_ref = torch.from_numpy(ref_clahe).float().unsqueeze(0).unsqueeze(0).to(DEVICE) / 255.0
+        t_target = torch.from_numpy(target_clahe).float().unsqueeze(0).unsqueeze(0).to(DEVICE) / 255.0
 
-    matcher = _get_matcher()
-    with torch.inference_mode():
-        corrs = matcher({"image0": t_ref, "image1": t_target})
+        matcher = _get_matcher()
+        with torch.inference_mode():
+            corrs = matcher({"image0": t_ref, "image1": t_target})
 
-    pts0 = corrs["keypoints0"].cpu().numpy()
-    pts1 = corrs["keypoints1"].cpu().numpy()
+        pts0 = corrs["keypoints0"].cpu().numpy()
+        pts1 = corrs["keypoints1"].cpu().numpy()
 
-    total_matches = len(pts0)
-    if total_matches < 4:
-        return None, None, None, total_matches, 0.0, 0.0
+        total_matches = len(pts0)
+        if total_matches < 4:
+            return None, None, None, total_matches, 0.0, 0.0
 
-    H, mask = cv2.findHomography(pts1, pts0, cv2.USAC_MAGSAC, 3.5)
-    if H is None:
-        return None, None, None, total_matches, 0.0, 0.0
+        H, mask = cv2.findHomography(pts1, pts0, cv2.USAC_MAGSAC, 3.5)
+        if H is None:
+            return None, None, None, total_matches, 0.0, 0.0
 
-    inliers = mask.ravel() == 1
-    inlier_count = int(np.sum(inliers))
-    inlier_ratio = (inlier_count / total_matches) * 100
+        inliers = mask.ravel() == 1
+        inlier_count = int(np.sum(inliers))
+        inlier_ratio = (inlier_count / total_matches) * 100
 
-    if inlier_count < 4:
-        return None, None, None, inlier_count, inlier_ratio, 0.0
+        if inlier_count < 4:
+            return None, None, None, inlier_count, inlier_ratio, 0.0
 
-    rmse_value = compute_rmse(pts1, pts0, H, inliers)
+        rmse_value = compute_rmse(pts1, pts0, H, inliers)
 
-    aligned_target = cv2.warpPerspective(target_img_std, H, (w_std, h_std))
-    overlay_blend = cv2.addWeighted(ref_img_std, 0.5, aligned_target, 0.5, 0)
+        aligned_target = cv2.warpPerspective(target_img_std, H, (w_std, h_std))
+        overlay_blend = cv2.addWeighted(ref_img_std, 0.5, aligned_target, 0.5, 0)
 
-    canvas = np.hstack((ref_img_std, target_img_std))
-    vis_matches = cv2.cvtColor(canvas, cv2.COLOR_GRAY2RGB)
+        canvas = np.hstack((ref_img_std, target_img_std))
+        vis_matches = cv2.cvtColor(canvas, cv2.COLOR_GRAY2RGB)
 
-    inlier_pts0 = pts0[inliers]
-    inlier_pts1 = pts1[inliers]
-    step = max(1, len(inlier_pts0) // 40)
+        inlier_pts0 = pts0[inliers]
+        inlier_pts1 = pts1[inliers]
+        step = max(1, len(inlier_pts0) // 40)
 
-    for i in range(0, len(inlier_pts0), step):
-        p0 = (int(round(inlier_pts0[i][0])), int(round(inlier_pts0[i][1])))
-        p1 = (int(round(inlier_pts1[i][0] + w_std)), int(round(inlier_pts1[i][1])))
-        cv2.circle(vis_matches, p0, 3, (255, 50, 50), -1, lineType=cv2.LINE_AA)
-        cv2.circle(vis_matches, p1, 3, (255, 50, 50), -1, lineType=cv2.LINE_AA)
-        cv2.line(vis_matches, p0, p1, (0, 255, 0), 1, lineType=cv2.LINE_AA)
+        for i in range(0, len(inlier_pts0), step):
+            p0 = (int(round(inlier_pts0[i][0])), int(round(inlier_pts0[i][1])))
+            p1 = (int(round(inlier_pts1[i][0] + w_std)), int(round(inlier_pts1[i][1])))
+            cv2.circle(vis_matches, p0, 3, (255, 50, 50), -1, lineType=cv2.LINE_AA)
+            cv2.circle(vis_matches, p1, 3, (255, 50, 50), -1, lineType=cv2.LINE_AA)
+            cv2.line(vis_matches, p0, p1, (0, 255, 0), 1, lineType=cv2.LINE_AA)
 
-    return aligned_target, overlay_blend, vis_matches, inlier_count, inlier_ratio, rmse_value
+        return aligned_target, overlay_blend, vis_matches, inlier_count, inlier_ratio, rmse_value
+    except Exception:
+        return _run_sift_fallback(ref_img_std, target_img_std)
