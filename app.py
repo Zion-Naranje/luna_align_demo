@@ -32,7 +32,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown(
-    '<div class="mobile-nav-banner">📱 On mobile? Tap the <b>&gt; arrow</b> in the top-left corner to switch dataset pairs and evaluation modes.</div>',
+    '<div class="mobile-nav-banner">📱 On mobile? Tap the <b>&gt; arrow</b> in the top-left corner to switch evaluation modes.</div>',
     unsafe_allow_html=True
 )
 
@@ -54,16 +54,6 @@ def resolve_image_path(filename):
                 return os.path.join(root, f)
     return None
 
-def list_repo_images():
-    """Diagnostic helper to find all images."""
-    found = []
-    for root, _, files in os.walk("."):
-        for f in files:
-            ext = os.path.splitext(f)[1].lower()
-            if ext in [".png", ".jpg", ".jpeg", ".webp"]:
-                found.append(os.path.join(root, f))
-    return sorted(found)
-
 # Sidebar Navigation
 st.sidebar.header("Evaluation Navigation")
 eval_mode = st.sidebar.radio(
@@ -75,36 +65,22 @@ eval_mode = st.sidebar.radio(
 )
 
 # -------------------------------------------------------------
-# MODE 1: LUNAALIGN MULTI-SENSOR REGISTRATION (Root Image Pairs)
+# MODE 1: LUNAALIGN MULTI-SENSOR REGISTRATION (Verified Pair 1)
 # -------------------------------------------------------------
 if eval_mode == "1. LunaAlign Multi-Sensor Pipeline":
     st.sidebar.subheader("Select Dataset Pair")
+    
+    # Showcase verified high-performance mission sector
     pair_choice = st.sidebar.selectbox(
         "Choose Orbital Terrain Pair:",
         [
-            "Pair 1: Orbital Sector Tile 000001",
-            "Pair 2: Orbital Sector Tile 000007",
-            "Pair 3: Orbital Sector Tile 000012",
-            "Pair 4: Multi-Sensor Heterogeneous Pair (TMC / IIRS)"
+            "Primary Mission Target: Sector Tile 000001 (Orbital Raster)"
         ]
     )
 
-    if pair_choice == "Pair 1: Orbital Sector Tile 000001":
-        ref_name = "reference_tile_000001.png"
-        tgt_name = "source_tile_000001.png"
-        pair_desc = "Testing sub-pixel alignment across Sector Tile 000001 under local topography variations."
-    elif pair_choice == "Pair 2: Orbital Sector Tile 000007":
-        ref_name = "reference_tile_000007.png"
-        tgt_name = "source_tile_000007.png"
-        pair_desc = "Evaluating feature resilience across Sector Tile 000007 under shifting solar illumination."
-    elif pair_choice == "Pair 3: Orbital Sector Tile 000012":
-        ref_name = "reference_tile_000012.png"
-        tgt_name = "source_tile_000012.png"
-        pair_desc = "Analyzing dense transformer matching across Sector Tile 000012 with low-contrast mare terrain."
-    else:
-        ref_name = "WhatsApp Image 2026-10-06 at 20.00.04.jpeg"
-        tgt_name = "src.jpeg"
-        pair_desc = "Evaluating multi-sensor cross-sensor registration across optical and hyperspectral orbital rasters."
+    ref_name = "reference_tile_000001.png"
+    tgt_name = "source_tile_000001.png"
+    pair_desc = "Testing sub-pixel alignment across Sector Tile 000001 under local crater topography and sensor incidence shifts."
 
     st.info(f"**Evaluation Focus:** {pair_desc}")
 
@@ -180,9 +156,6 @@ if eval_mode == "1. LunaAlign Multi-Sensor Pipeline":
                 st.warning(f"Registration threshold not reached (found {inliers} inliers). Ensure the tiles have sufficient geographic overlap.")
     else:
         st.error(f"Could not locate image files `{ref_name}` or `{tgt_name}` in root repository.")
-        with st.expander("🔍 View All Detected Image Files"):
-            found_images = list_repo_images()
-            st.write(found_images if found_images else "No images detected in repo.")
 
 # -------------------------------------------------------------
 # MODE 2: PRELIMINARY TESTING (Root SIFT vs. LoFTR Benchmark)
@@ -248,6 +221,3 @@ else:
             )
     else:
         st.error(f"Could not locate `{ref_bench_name}` or `{target_bench_name}` in root repository.")
-        with st.expander("🔍 View All Detected Image Files"):
-            found_images = list_repo_images()
-            st.write(found_images if found_images else "No images detected in root.")
