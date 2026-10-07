@@ -2,12 +2,30 @@ import os
 import cv2
 import torch
 import numpy as np
+import ssl
+import requests
+
+# Fix Python 3.14 SSLContext callable bug
+if not callable(getattr(ssl, '_create_default_https_context', None)):
+    ssl._create_default_https_context = ssl._create_unverified_context
+elif isinstance(getattr(ssl, '_create_default_https_context', None), ssl.SSLContext):
+    ssl._create_default_https_context = lambda *args, **kwargs: ssl._create_unverified_context()
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 MATCHER = None
 
+def _download_weights_safely(url, target_path):
+    """Safely downloads model weights using requests to bypass urllib SSL bugs."""
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+    if not os.path.exists(target_path) or os.path.getsize(target_path) < 1000000:
+        response = requests.get(url, stream=True, timeout=60, verify=False)
+        response.raise_for_status()
+        with open(target_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+
 def _get_matcher():
-    """Lazy-load LoFTR matcher to ensure clean startup in Streamlit."""
+    """Initializes LoFTR matcher safely without urllib SSL failure."""
     global MATCHER
     if MATCHER is None:
         try:
@@ -15,7 +33,30 @@ def _get_matcher():
         except ImportError:
             import kornia.feature as KF
             LoFTR = KF.LoFTR
-        MATCHER = LoFTR(pretrained="outdoor").to(DEVICE).eval()
+        
+        # Pre-cache LoFTR outdoor weights into torch hub cache
+        hub_dir = torch.hub.get_dir()
+        checkpoints_dir = os.path.join(hub_dir, "checkpoints")
+        cached_file = os.path.join(checkpoints_dir, "outdoor_ds.ckpt")
+        weight_url = "https://raw.githubusercontent.com/zju3dv/LoFTR/master/weights/outdoor_ds.ckpt"
+        
+        try:
+            _download_weights_safely(weight_url, cached_file)
+        except Exception:
+            pass
+
+        try:
+            MATCHER = LoFTR(pretrained="outdoor").to(DEVICE).eval()
+        except Exception:
+            # Fallback direct state_dict load if torch.hub download method is broken
+            MATCHER = LoFTR(pretrained=None).to(DEVICE)
+            if os.path.exists(cached_file):
+                state_dict = torch.load(cached_file, map_location=DEVICE)
+                if "state_dict" in state_dict:
+                    state_dict = state_dict["state_dict"]
+                MATCHER.load_state_dict(state_dict)
+            MATCHER.eval()
+
     return MATCHER
 
 def apply_clahe(img):
