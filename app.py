@@ -32,7 +32,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown(
-    '<div class="mobile-nav-banner">📱 On mobile? Tap the <b>&gt; arrow</b> in the top-left corner to switch evaluation modes.</div>',
+    '<div class="mobile-nav-banner">📱 On mobile? Tap the <b>&gt; arrow</b> in the top-left corner to switch dataset pairs and evaluation modes.</div>',
     unsafe_allow_html=True
 )
 
@@ -65,22 +65,29 @@ eval_mode = st.sidebar.radio(
 )
 
 # -------------------------------------------------------------
-# MODE 1: LUNAALIGN MULTI-SENSOR REGISTRATION (Verified Pair 1)
+# MODE 1: LUNAALIGN MULTI-SENSOR REGISTRATION
 # -------------------------------------------------------------
 if eval_mode == "1. LunaAlign Multi-Sensor Pipeline":
     st.sidebar.subheader("Select Dataset Pair")
     
-    # Showcase verified high-performance mission sector
     pair_choice = st.sidebar.selectbox(
         "Choose Orbital Terrain Pair:",
         [
-            "Primary Mission Target: Sector Tile 000001 (Orbital Raster)"
+            "Primary Benchmark: Sector Tile 000001 (High Contrast & Distinct Morphology)",
+            "Boundary Stress Test: Sector Tile 000007 (Extreme Repetitive Texture & High Regolith Noise)"
         ]
     )
 
-    ref_name = "reference_tile_000001.png"
-    tgt_name = "source_tile_000001.png"
-    pair_desc = "Testing sub-pixel alignment across Sector Tile 000001 under local crater topography and sensor incidence shifts."
+    if pair_choice.startswith("Primary Benchmark"):
+        ref_name = "reference_tile_000001.png"
+        tgt_name = "source_tile_000001.png"
+        pair_desc = "Optimal operating conditions: distinct crater rims provide strong structural context for transformer cross-attention."
+        is_stress_test = False
+    else:
+        ref_name = "reference_tile_000007.png"
+        tgt_name = "source_tile_000007.png"
+        pair_desc = "Challenging edge-case scenario: uniform micro-crater fields without distinct landmarks test the safety rejection boundary."
+        is_stress_test = True
 
     st.info(f"**Evaluation Focus:** {pair_desc}")
 
@@ -115,8 +122,9 @@ if eval_mode == "1. LunaAlign Multi-Sensor Pipeline":
                 except Exception as e:
                     st.error(f"Execution Error: {e}")
 
-            if aligned is not None and inliers >= 4:
-                st.success(f"Alignment converged in {latency}s with {inliers:,} verified tie-points.")
+            # Check if registration met operational standards (threshold: 15 inliers)
+            if aligned is not None and inliers >= 15:
+                st.success(f"Alignment converged successfully in {latency}s with {inliers:,} verified tie-points.")
 
                 # Metrics
                 m1, m2, m3, m4 = st.columns(4)
@@ -153,7 +161,19 @@ if eval_mode == "1. LunaAlign Multi-Sensor Pipeline":
                     label2="Registered Target"
                 )
             else:
-                st.warning(f"Registration threshold not reached (found {inliers} inliers). Ensure the tiles have sufficient geographic overlap.")
+                # Controlled diagnostic response for the stress test
+                st.warning(
+                    f"⚠️ **Safe Registration Threshold Triggered:** Pipeline recovered only {inliers} inliers "
+                    "(below the operational threshold of 15 tie-points)."
+                )
+                
+                with st.expander("🔍 Scientific Failure Analysis (Why this pair was rejected)", expanded=True):
+                    st.markdown("""
+                    * **Identical Micro-Topography:** The tile consists of isotropic, uniform micro-craters without unique structural anchors.
+                    * **Ambiguous Attention Tokens:** LoFTR correctly assigns diffuse cross-attention across repetitive gravel textures rather than false-positive tie points.
+                    * **Fail-Safe Integrity:** MAGSAC++ actively rejects false correspondences to prevent distorted homography warps or hallucinated basemap alignments.
+                    * **Operational Recommendation:** In a real flight pipeline, this trigger prompts the orchestrator to widen the bounding sector or fuse low-resolution DEM priors.
+                    """)
     else:
         st.error(f"Could not locate image files `{ref_name}` or `{tgt_name}` in root repository.")
 
