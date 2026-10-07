@@ -32,7 +32,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown(
-    '<div class="mobile-nav-banner">📱 On mobile? Tap the <b>&gt; arrow</b> in the top-left corner to switch dataset pairs and evaluation modes.</div>',
+    '<div class="mobile-nav-banner">📱 On mobile? Tap the <b>&gt; arrow</b> in the top-left corner to switch evaluation modes.</div>',
     unsafe_allow_html=True
 )
 
@@ -59,15 +59,80 @@ st.sidebar.header("Evaluation Navigation")
 eval_mode = st.sidebar.radio(
     "Choose Evaluation Mode:",
     [
-        "1. LunaAlign Multi-Sensor Pipeline",
-        "2. Preliminary Testing (SIFT vs. LoFTR)"
+        "1. Preliminary Testing (SIFT vs. LoFTR)",
+        "2. LunaAlign Multi-Sensor Pipeline"
     ]
 )
 
 # -------------------------------------------------------------
-# MODE 1: LUNAALIGN MULTI-SENSOR REGISTRATION
+# MODE 1: PRELIMINARY TESTING (Root SIFT vs. LoFTR Benchmark)
 # -------------------------------------------------------------
-if eval_mode == "1. LunaAlign Multi-Sensor Pipeline":
+if eval_mode == "1. Preliminary Testing (SIFT vs. LoFTR)":
+    st.subheader("Preliminary Testing — SIFT (Classical) vs. LoFTR (Transformer)")
+    st.markdown(
+        "Demonstrating why classical feature detection fails under changing solar illumination and why "
+        "detector-free attention models are necessary for lunar terrain."
+    )
+
+    ref_bench_name = "WhatsApp Image 2026-09-29 at 22.09.14.jpeg"
+    target_bench_name = "isro_payload.JPG.jpeg"
+
+    ref_bench = resolve_image_path(ref_bench_name)
+    target_bench = resolve_image_path(target_bench_name)
+
+    if ref_bench and target_bench:
+        img_ref_b = cv2.imread(ref_bench, cv2.IMREAD_GRAYSCALE)
+        img_tgt_b = cv2.imread(target_bench, cv2.IMREAD_GRAYSCALE)
+        h_std, w_std = 640, 640
+        img_ref_b_std = cv2.resize(img_ref_b, (w_std, h_std))
+        img_tgt_b_std = cv2.resize(img_tgt_b, (w_std, h_std))
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.image(img_ref_b_std, caption=f"Basemap: {os.path.basename(ref_bench)}", use_container_width=True)
+        with c2:
+            st.image(img_tgt_b_std, caption=f"Target: {os.path.basename(target_bench)}", use_container_width=True)
+
+        if st.button("⚡ Run Comparative Benchmark", type="primary", use_container_width=True):
+            with st.spinner("Executing SIFT baseline and LoFTR transformer sequentially..."):
+                vis_sift, sift_total, sift_inliers = run_sift_match(img_ref_b_std, img_tgt_b_std)
+                aligned_b, blend_b, vis_loftr, loftr_inliers, loftr_ratio, rmse_b = run_luna_align(ref_bench, target_bench)
+
+            col_sift, col_loftr = st.columns(2)
+
+            with col_sift:
+                st.subheader("SIFT — Classical Baseline")
+                st.image(vis_sift, caption=f"SIFT Inliers: {sift_inliers} verified matches", use_container_width=True)
+                st.markdown(f"""
+                * **Verified Matches:** **{sift_inliers} pts**
+                * **Characteristics:** Sparse, clustered correspondences
+                * **Failure Mode:** Relies entirely on local pixel gradient extrema. Misses matches across smooth lunar plains and drops features when shadows invert.
+                """)
+
+            with col_loftr:
+                st.subheader("LoFTR — Deep Attention Matcher")
+                st.image(vis_loftr, caption=f"LoFTR Inliers: {loftr_inliers:,} verified matches", use_container_width=True)
+                st.markdown(f"""
+                * **Verified Matches:** **{loftr_inliers:,} pts**
+                * **Characteristics:** Uniform, dense surface coverage
+                * **Advantage:** Eliminates the local detector step. Self- and cross-attention correlate shapes globally, keeping tie-points intact across low-texture regions.
+                """)
+
+            st.divider()
+
+            ratio_mult = round(loftr_inliers / max(1, sift_inliers), 1)
+            st.info(
+                f"**Empirical Finding:** LoFTR recovered **{ratio_mult}× more valid correspondences** "
+                "than SIFT under identical illumination shifts. This validates our choice of a detector-free "
+                "deep matching architecture for the LunaAlign core pipeline."
+            )
+    else:
+        st.error(f"Could not locate `{ref_bench_name}` or `{target_bench_name}` in root repository.")
+
+# -------------------------------------------------------------
+# MODE 2: LUNAALIGN MULTI-SENSOR REGISTRATION (Sector Pairs)
+# -------------------------------------------------------------
+else:
     st.sidebar.subheader("Select Dataset Pair")
     
     pair_choice = st.sidebar.selectbox(
@@ -82,12 +147,10 @@ if eval_mode == "1. LunaAlign Multi-Sensor Pipeline":
         ref_name = "reference_tile_000001.png"
         tgt_name = "source_tile_000001.png"
         pair_desc = "Optimal operating conditions: distinct crater rims provide strong structural context for transformer cross-attention."
-        is_stress_test = False
     else:
         ref_name = "reference_tile_000007.png"
         tgt_name = "source_tile_000007.png"
         pair_desc = "Challenging edge-case scenario: uniform micro-crater fields without distinct landmarks test the safety rejection boundary."
-        is_stress_test = True
 
     st.info(f"**Evaluation Focus:** {pair_desc}")
 
@@ -176,68 +239,3 @@ if eval_mode == "1. LunaAlign Multi-Sensor Pipeline":
                     """)
     else:
         st.error(f"Could not locate image files `{ref_name}` or `{tgt_name}` in root repository.")
-
-# -------------------------------------------------------------
-# MODE 2: PRELIMINARY TESTING (Root SIFT vs. LoFTR Benchmark)
-# -------------------------------------------------------------
-else:
-    st.subheader("Preliminary Testing — SIFT (Classical) vs. LoFTR (Transformer)")
-    st.markdown(
-        "Demonstrating why classical feature detection fails under changing solar illumination and why "
-        "detector-free attention models are necessary for lunar terrain."
-    )
-
-    ref_bench_name = "WhatsApp Image 2026-09-29 at 22.09.14.jpeg"
-    target_bench_name = "isro_payload.JPG.jpeg"
-
-    ref_bench = resolve_image_path(ref_bench_name)
-    target_bench = resolve_image_path(target_bench_name)
-
-    if ref_bench and target_bench:
-        img_ref_b = cv2.imread(ref_bench, cv2.IMREAD_GRAYSCALE)
-        img_tgt_b = cv2.imread(target_bench, cv2.IMREAD_GRAYSCALE)
-        h_std, w_std = 640, 640
-        img_ref_b_std = cv2.resize(img_ref_b, (w_std, h_std))
-        img_tgt_b_std = cv2.resize(img_tgt_b, (w_std, h_std))
-
-        c1, c2 = st.columns(2)
-        with c1:
-            st.image(img_ref_b_std, caption=f"Basemap: {os.path.basename(ref_bench)}", use_container_width=True)
-        with c2:
-            st.image(img_tgt_b_std, caption=f"Target: {os.path.basename(target_bench)}", use_container_width=True)
-
-        if st.button("⚡ Run Comparative Benchmark", type="primary", use_container_width=True):
-            with st.spinner("Executing SIFT baseline and LoFTR transformer sequentially..."):
-                vis_sift, sift_total, sift_inliers = run_sift_match(img_ref_b_std, img_tgt_b_std)
-                aligned_b, blend_b, vis_loftr, loftr_inliers, loftr_ratio, rmse_b = run_luna_align(ref_bench, target_bench)
-
-            col_sift, col_loftr = st.columns(2)
-
-            with col_sift:
-                st.subheader("SIFT — Classical Baseline")
-                st.image(vis_sift, caption=f"SIFT Inliers: {sift_inliers} verified matches", use_container_width=True)
-                st.markdown(f"""
-                * **Verified Matches:** **{sift_inliers} pts**
-                * **Characteristics:** Sparse, clustered correspondences
-                * **Failure Mode:** Relies entirely on local pixel gradient extrema. Misses matches across smooth lunar plains and drops features when shadows invert.
-                """)
-
-            with col_loftr:
-                st.subheader("LoFTR — Deep Attention Matcher")
-                st.image(vis_loftr, caption=f"LoFTR Inliers: {loftr_inliers:,} verified matches", use_container_width=True)
-                st.markdown(f"""
-                * **Verified Matches:** **{loftr_inliers:,} pts**
-                * **Characteristics:** Uniform, dense surface coverage
-                * **Advantage:** Eliminates the local detector step. Self- and cross-attention correlate shapes globally, keeping tie-points intact across low-texture regions.
-                """)
-
-            st.divider()
-
-            ratio_mult = round(loftr_inliers / max(1, sift_inliers), 1)
-            st.info(
-                f"**Empirical Finding:** LoFTR recovered **{ratio_mult}× more valid correspondences** "
-                "than SIFT under identical illumination shifts. This validates our choice of a detector-free "
-                "deep matching architecture for the LunaAlign core pipeline."
-            )
-    else:
-        st.error(f"Could not locate `{ref_bench_name}` or `{target_bench_name}` in root repository.")
