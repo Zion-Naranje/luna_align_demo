@@ -65,7 +65,7 @@ eval_mode = st.sidebar.radio(
 )
 
 # -------------------------------------------------------------
-# MODE 1: PRELIMINARY TESTING (Root SIFT vs. LoFTR Benchmark)
+# MODE 1: PRELIMINARY TESTING (SIFT vs. LoFTR Benchmark)
 # -------------------------------------------------------------
 if eval_mode == "1. Preliminary Testing (SIFT vs. LoFTR)":
     st.subheader("Preliminary Testing — SIFT (Classical) vs. LoFTR (Transformer)")
@@ -89,9 +89,9 @@ if eval_mode == "1. Preliminary Testing (SIFT vs. LoFTR)":
 
         c1, c2 = st.columns(2)
         with c1:
-            st.image(img_ref_b_std, caption=f"Basemap: {os.path.basename(ref_bench)}")
+            st.image(img_ref_b_std, caption="LROC NAC Basemap (Reference)")
         with c2:
-            st.image(img_tgt_b_std, caption=f"Target: {os.path.basename(target_bench)}")
+            st.image(img_tgt_b_std, caption="ISRO Chandrayaan-2 TMC (Target)")
 
         if st.button("⚡ Run Comparative Benchmark", type="primary"):
             with st.spinner("Executing SIFT baseline and LoFTR transformer sequentially..."):
@@ -127,7 +127,7 @@ if eval_mode == "1. Preliminary Testing (SIFT vs. LoFTR)":
                 "deep matching architecture for the LunaAlign core pipeline."
             )
     else:
-        st.error(f"Could not locate `{ref_bench_name}` or `{target_bench_name}` in root repository.")
+        st.error(f"Could not locate benchmark images in root repository.")
 
 # -------------------------------------------------------------
 # MODE 2: LUNAALIGN MULTI-SENSOR REGISTRATION (Sector Pairs)
