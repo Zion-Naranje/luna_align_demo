@@ -1,31 +1,33 @@
 import os
+import gc
 import cv2
 import torch
 import numpy as np
 import ssl
 import requests
 
-# Fix Python 3.14 SSLContext callable bug
+# Fix Python 3.14 SSLContext issue
 if not callable(getattr(ssl, '_create_default_https_context', None)):
     ssl._create_default_https_context = ssl._create_unverified_context
 elif isinstance(getattr(ssl, '_create_default_https_context', None), ssl.SSLContext):
     ssl._create_default_https_context = lambda *args, **kwargs: ssl._create_unverified_context()
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device("cpu")  # Force CPU on Streamlit Cloud to avoid CUDA memory overhead
+torch.set_grad_enabled(False)
 MATCHER = None
 
 def _download_weights_safely(url, target_path):
-    """Safely downloads model weights using requests to bypass urllib SSL bugs."""
+    """Safely downloads model weights with stream chunks."""
     os.makedirs(os.path.dirname(target_path), exist_ok=True)
     if not os.path.exists(target_path) or os.path.getsize(target_path) < 1000000:
         response = requests.get(url, stream=True, timeout=60, verify=False)
         response.raise_for_status()
         with open(target_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
+            for chunk in response.iter_content(chunk_size=16384):
                 f.write(chunk)
 
 def _get_matcher():
-    """Initializes LoFTR matcher safely without urllib SSL failure."""
+    """Initializes LoFTR matcher safely within cloud memory limits."""
     global MATCHER
     if MATCHER is None:
         try:
@@ -34,7 +36,6 @@ def _get_matcher():
             import kornia.feature as KF
             LoFTR = KF.LoFTR
         
-        # Pre-cache LoFTR outdoor weights into torch hub cache
         hub_dir = torch.hub.get_dir()
         checkpoints_dir = os.path.join(hub_dir, "checkpoints")
         cached_file = os.path.join(checkpoints_dir, "outdoor_ds.ckpt")
@@ -48,7 +49,6 @@ def _get_matcher():
         try:
             MATCHER = LoFTR(pretrained="outdoor").to(DEVICE).eval()
         except Exception:
-            # Fallback direct state_dict load if torch.hub download method is broken
             MATCHER = LoFTR(pretrained=None).to(DEVICE)
             if os.path.exists(cached_file):
                 state_dict = torch.load(cached_file, map_location=DEVICE)
@@ -61,7 +61,7 @@ def _get_matcher():
 
 def apply_clahe(img):
     """Normalize local dynamic range and shadow boundaries."""
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
     return clahe.apply(img)
 
 def compute_rmse(pts_target, pts_ref, H, inliers):
@@ -119,9 +119,11 @@ def run_sift_match(ref_img, target_img):
     return vis_sift, total_good, inlier_count
 
 def run_luna_align(ref_path, target_path):
-    """Deep attention LoFTR matcher with projective MAGSAC++ homography estimation."""
+    """Memory-optimized LoFTR registration pipeline."""
     if not os.path.exists(ref_path) or not os.path.exists(target_path):
         raise FileNotFoundError(f"Missing file: {ref_path} or {target_path}")
+
+    gc.collect()
 
     ref_img = cv2.imread(ref_path, cv2.IMREAD_GRAYSCALE)
     target_img = cv2.imread(target_path, cv2.IMREAD_GRAYSCALE)
@@ -129,7 +131,8 @@ def run_luna_align(ref_path, target_path):
     if ref_img is None or target_img is None:
         raise ValueError("Could not decode images.")
 
-    h_std, w_std = 640, 640
+    # 480x480 standard keeps memory well within Streamlit Cloud limits
+    h_std, w_std = 480, 480
     ref_img_std = cv2.resize(ref_img, (w_std, h_std))
     target_img_std = cv2.resize(target_img, (w_std, h_std))
 
@@ -145,6 +148,10 @@ def run_luna_align(ref_path, target_path):
 
     pts0 = corrs["keypoints0"].cpu().numpy()
     pts1 = corrs["keypoints1"].cpu().numpy()
+
+    # Clean intermediate tensor memory
+    del t_ref, t_target, corrs
+    gc.collect()
 
     total_matches = len(pts0)
     if total_matches < 4:
